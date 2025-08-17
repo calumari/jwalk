@@ -20,51 +20,7 @@ This requires a Go version new enough to use the `github.com/go-json-experiment/
 
 ## Quick Start
 
-The following example registers an operator that converts an object like `{"$date":"<RFC3339>"}` directly into a `time.Time`.
-
-```go
-package main
-
-import (
-	"fmt"
-	"time"
-
-	json "github.com/go-json-experiment/json"
-	"github.com/go-json-experiment/json/jsontext"
-
-	jwalk "github.com/calumari/jwalk"
-)
-
-func init() {
-	jwalk.MustRegister(jwalk.DefaultRegistry, "date", func(dec *jsontext.Decoder) (time.Time, error) {
-		var t time.Time
-		err := json.UnmarshalDecode(dec, &t)
-		return t, err
-	})
-}
-
-// Example shows registering a $date operator converting objects of the form
-// {"$date": <RFC3339>} into a time.Time.
-func main() {
-	input := []byte(`{"time": {"$date": "2023-10-01T12:00:00Z"}}`)
-
-	var d map[string]any
-	err := json.Unmarshal(input, &d, json.WithUnmarshalers(
-		jwalk.Unmarshaler(jwalk.DefaultRegistry),
-	))
-	if err != nil {
-		panic(err)
-	}
-	// Output: 2023-10-01T12:00:00Z
-	fmt.Println(d["time"])
-}
-```
-
-Output:
-
-```go
-2025-08-17 12:34:56 +0000 UTC
-```
+See the [example](examples/main.go) for a full example of how to use `jwalk`.
 
 ## Roadmap and Ideas
 
