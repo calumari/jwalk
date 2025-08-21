@@ -79,6 +79,19 @@ func TestUnmarshaler(t *testing.T) {
 }
 
 func TestDocumentUnmarshaler(t *testing.T) {
+	t.Run("non-object document decodes into empty D", func(t *testing.T) {
+		var d D
+		err := json.Unmarshal([]byte(`null`), &d, json.WithUnmarshalers(documentUnmarshaler()))
+		require.NoError(t, err)
+		require.Len(t, d, 0)
+	})
+
+	t.Run("unclosed object returns error", func(t *testing.T) {
+		var d D
+		err := json.Unmarshal([]byte(`{`), &d, json.WithUnmarshalers(documentUnmarshaler()))
+		require.Error(t, err)
+	})
+
 	t.Run("empty object decodes into empty D", func(t *testing.T) {
 		var d D
 		err := json.Unmarshal([]byte(`{}`), &d, json.WithUnmarshalers(documentUnmarshaler()))
@@ -129,6 +142,19 @@ func TestDocumentUnmarshaler(t *testing.T) {
 }
 
 func TestCollectionUnmarshaler(t *testing.T) {
+	t.Run("non-array collection decodes into empty A", func(t *testing.T) {
+		var a A
+		err := json.Unmarshal([]byte(`null`), &a, json.WithUnmarshalers(collectionUnmarshaler()))
+		require.NoError(t, err)
+		require.Len(t, a, 0)
+	})
+
+	t.Run("unclosed array returns error", func(t *testing.T) {
+		var a A
+		err := json.Unmarshal([]byte(`[`), &a, json.WithUnmarshalers(collectionUnmarshaler()))
+		require.Error(t, err)
+	})
+
 	t.Run("empty array decodes into empty A", func(t *testing.T) {
 		var a A
 		err := json.Unmarshal([]byte(`[]`), &a, json.WithUnmarshalers(collectionUnmarshaler()))
