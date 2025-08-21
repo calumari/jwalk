@@ -14,9 +14,9 @@ import (
 //   - *A              -> direct array decoding
 func Unmarshalers(r *OperatorRegistry) *json.Unmarshalers {
 	return json.JoinUnmarshalers(
-		Unmarshaler(r), // *any (objects, arrays, operators)
-		documentUnmarshaler(),
-		collectionUnmarshaler(),
+		unmarshalValue(r), // *any (objects, arrays, operators)
+		unmarshalDocument(),
+		unmarshalCollection(),
 	)
 }
 
@@ -27,10 +27,10 @@ func Unmarshalers(r *OperatorRegistry) *json.Unmarshalers {
 //     and dispatches to the registered operator implementation. Any extra
 //     fields after the operator root field are currently ignored (skipped).
 //   - Leaves primitive JSON values (string, number, bool, null) to other
-//     unmarshaler logic by returning json.SkipFunc.
+//     unmarshalValue logic by returning json.SkipFunc.
 //
 // Empty objects ({}) produce an empty D; empty arrays ([]) produce an empty A.
-func Unmarshaler(r *OperatorRegistry) *json.Unmarshalers {
+func unmarshalValue(r *OperatorRegistry) *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *any) error {
 		switch dec.PeekKind() {
 		case '{':
@@ -63,7 +63,7 @@ func Unmarshaler(r *OperatorRegistry) *json.Unmarshalers {
 // interpreted here; that only happens when decoding into interface{} via
 // Unmarshaler. This separation lets callers opt-in to operator semantics only
 // when decoding into interface{} graphs.
-func documentUnmarshaler() *json.Unmarshalers {
+func unmarshalDocument() *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *D) error {
 		if dec.PeekKind() != '{' {
 			return json.SkipFunc
@@ -79,7 +79,7 @@ func documentUnmarshaler() *json.Unmarshalers {
 
 // CollectionUnmarshaler provides decoding of a JSON array into an *A when the
 // target type is *A.
-func collectionUnmarshaler() *json.Unmarshalers {
+func unmarshalCollection() *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *A) error {
 		if dec.PeekKind() != '[' {
 			return json.SkipFunc
