@@ -25,7 +25,7 @@ func main() {
 	input := []byte(`{"b":true,"time":{"$date":"2023-10-01T12:00:00Z"},"a":[{"$date":"2023-10-01T12:00:00Z"}],"m":{"o":{"$date":"2023-10-01T12:00:00Z"}}}`)
 
 	var d jwalk.D
-	err := json.Unmarshal(input, &d, json.WithUnmarshalers(jwalk.Unmarshalers(jwalk.DefaultRegistry)))
+	err := json.Unmarshal(input, &d, json.WithUnmarshalers(jwalk.Unmarshaler(jwalk.DefaultRegistry)))
 	if err != nil {
 		panic(err)
 	}
