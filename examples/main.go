@@ -24,11 +24,13 @@ func main() {
 	// input := []byte(`[{"$date":"2023-10-01T12:00:00Z"}]`)
 	input := []byte(`{"b":true,"time":{"$date":"2023-10-01T12:00:00Z"},"a":[{"$date":"2023-10-01T12:00:00Z"}],"m":{"o":{"$date":"2023-10-01T12:00:00Z"}}}`)
 
+	// Option 1: traditional unmarshal into *D
 	var d jwalk.D
-	err := json.Unmarshal(input, &d, json.WithUnmarshalers(jwalk.Unmarshaler(jwalk.DefaultRegistry)))
+	err := json.Unmarshal(input, &d, json.WithUnmarshalers(jwalk.Unmarshalers(jwalk.DefaultRegistry)))
 	if err != nil {
 		panic(err)
 	}
+
 	// Output: 2023-10-01T12:00:00Z
-	fmt.Println(d)
+	fmt.Println(d, d)
 }

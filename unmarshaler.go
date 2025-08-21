@@ -7,6 +7,19 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 )
 
+// Unmarshalers returns the full set of jwalk unmarshalers allowing decoding
+// into:
+//   - any/interface{} -> objects as D, arrays as A, operator objects dispatched
+//   - *D              -> direct ordered object decoding
+//   - *A              -> direct array decoding
+func Unmarshalers(r *OperatorRegistry) *json.Unmarshalers {
+	return json.JoinUnmarshalers(
+		Unmarshaler(r), // *any (objects, arrays, operators)
+		documentUnmarshaler(),
+		collectionUnmarshaler(),
+	)
+}
+
 // Unmarshaler returns a custom JSON unmarshaller that:
 //   - Wraps JSON objects as type D (ordered document) rather than map[string]any
 //   - Wraps JSON arrays as type A so callers can distinguish from []any
@@ -21,98 +34,142 @@ func Unmarshaler(r *OperatorRegistry) *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *any) error {
 		switch dec.PeekKind() {
 		case '{':
-			if _, err := dec.ReadToken(); err != nil { // consume '{'
-				return fmt.Errorf("read object open: %w", err)
+			// object, potentially operator
+			val, wasOperator, err := decodeObject(dec, r, true)
+			if err != nil {
+				return err
 			}
-
-			// handle empty object early.
-			if dec.PeekKind() == '}' {
-				if _, err := dec.ReadToken(); err != nil { // consume '}'
-					return fmt.Errorf("read object close: %w", err)
-				}
-				*v = D{}
-				return nil
+			if wasOperator {
+				*v = val
+			} else {
+				*v = val.(D)
 			}
-
-			// read first key to decide if operator object.
-			var firstKey string
-			if err := json.UnmarshalDecode(dec, &firstKey); err != nil {
-				return fmt.Errorf("read object first key: %w", err)
-			}
-
-			// operator object: {"$<name>": ...}
-			if len(firstKey) > 0 && firstKey[0] == '$' {
-				vv, err := r.Call(firstKey[1:], dec)
-				if err != nil {
-					return fmt.Errorf("operator %q call: %w", firstKey, err)
-				}
-				// skip any remaining fields (currently permissive behavior).
-				for dec.PeekKind() != '}' {
-					if err := dec.SkipValue(); err != nil {
-						return fmt.Errorf("operator %q skip extra field: %w", firstKey, err)
-					}
-				}
-				if _, err := dec.ReadToken(); err != nil { // consume closing '}'
-					return fmt.Errorf("operator %q read object close: %w", firstKey, err)
-				}
-				*v = vv
-				return nil
-			}
-
-			// regular object: build a D preserving key order.
-			res := make(D, 0)
-			var firstVal any
-			if err := json.UnmarshalDecode(dec, &firstVal); err != nil {
-				return fmt.Errorf("read object value for key %q: %w", firstKey, err)
-			}
-			res = append(res, E{Key: firstKey, Value: firstVal})
-
-			for dec.PeekKind() != '}' {
-				var k string
-				if err := json.UnmarshalDecode(dec, &k); err != nil {
-					return fmt.Errorf("read object key: %w", err)
-				}
-				var vv any
-				if err := json.UnmarshalDecode(dec, &vv); err != nil {
-					return fmt.Errorf("read object value: %w", err)
-				}
-				res = append(res, E{Key: k, Value: vv})
-			}
-
-			if _, err := dec.ReadToken(); err != nil { // consume closing '}'
-				return fmt.Errorf("read object close: %w", err)
-			}
-			*v = res
 			return nil
-
 		case '[':
-			if _, err := dec.ReadToken(); err != nil { // consume '['
-				return fmt.Errorf("read array open: %w", err)
-			}
-			// empty array?
-			if dec.PeekKind() == ']' {
-				if _, err := dec.ReadToken(); err != nil { // consume closing ']'
-					return fmt.Errorf("read array close: %w", err)
-				}
-				*v = A{}
-				return nil
-			}
-			arr := make(A, 0)
-			for dec.PeekKind() != ']' {
-				var elem any
-				if err := json.UnmarshalDecode(dec, &elem); err != nil {
-					return fmt.Errorf("read array element: %w", err)
-				}
-				arr = append(arr, elem)
-			}
-			if _, err := dec.ReadToken(); err != nil { // consume closing ']'
-				return fmt.Errorf("read array close: %w", err)
+			arr, err := decodeArray(dec, r)
+			if err != nil {
+				return err
 			}
 			*v = arr
 			return nil
-
-		default: // primitive (string, number, bool, null) -> let outer logic handle
+		default:
 			return json.SkipFunc
 		}
 	})
+}
+
+// DocumentUnmarshaler provides decoding of a JSON object into a *D when the
+// target type is *D (ordered key preservation). Operator objects are NOT
+// interpreted here; that only happens when decoding into interface{} via
+// Unmarshaler. This separation lets callers opt-in to operator semantics only
+// when decoding into interface{} graphs.
+func documentUnmarshaler() *json.Unmarshalers {
+	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *D) error {
+		if dec.PeekKind() != '{' {
+			return json.SkipFunc
+		}
+		val, _, err := decodeObject(dec, nil, false)
+		if err != nil {
+			return err
+		}
+		*v = val.(D)
+		return nil
+	})
+}
+
+// CollectionUnmarshaler provides decoding of a JSON array into an *A when the
+// target type is *A.
+func collectionUnmarshaler() *json.Unmarshalers {
+	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *A) error {
+		if dec.PeekKind() != '[' {
+			return json.SkipFunc
+		}
+		arr, err := decodeArray(dec, nil)
+		if err != nil {
+			return err
+		}
+		*v = arr
+		return nil
+	})
+}
+
+// decodeObject decodes a JSON object into a D or operator value. If
+// handleOperators is true and the first key is an operator, it returns the
+// operator value (any) with wasOperator=true. Otherwise it returns D.
+func decodeObject(dec *jsontext.Decoder, r *OperatorRegistry, handleOperators bool) (val any, wasOperator bool, err error) {
+	if _, err = dec.ReadToken(); err != nil { // '{'
+		return nil, false, fmt.Errorf("read object open: %w", err)
+	}
+	if dec.PeekKind() == '}' { // empty
+		if _, err = dec.ReadToken(); err != nil { // '}'
+			return nil, false, fmt.Errorf("read object close: %w", err)
+		}
+		return D{}, false, nil
+	}
+	// read first key
+	var firstKey string
+	if err = json.UnmarshalDecode(dec, &firstKey); err != nil {
+		return nil, false, fmt.Errorf("read object first key: %w", err)
+	}
+	if handleOperators && len(firstKey) > 0 && firstKey[0] == '$' && r != nil {
+		vv, opErr := r.Call(firstKey[1:], dec)
+		if opErr != nil {
+			return nil, false, fmt.Errorf("operator %q call: %w", firstKey, opErr)
+		}
+		for dec.PeekKind() != '}' { // skip remaining fields
+			if opErr = dec.SkipValue(); opErr != nil {
+				return nil, false, fmt.Errorf("operator %q skip extra field: %w", firstKey, opErr)
+			}
+		}
+		if _, opErr = dec.ReadToken(); opErr != nil {
+			return nil, false, fmt.Errorf("operator %q read object close: %w", firstKey, opErr)
+		}
+		return vv, true, nil
+	}
+	// regular object path
+	var firstVal any
+	if err = json.UnmarshalDecode(dec, &firstVal); err != nil {
+		return nil, false, fmt.Errorf("read object value for key %q: %w", firstKey, err)
+	}
+	res := D{{Key: firstKey, Value: firstVal}}
+	for dec.PeekKind() != '}' {
+		var k string
+		if err = json.UnmarshalDecode(dec, &k); err != nil {
+			return nil, false, fmt.Errorf("read object key: %w", err)
+		}
+		var vv any
+		if err = json.UnmarshalDecode(dec, &vv); err != nil {
+			return nil, false, fmt.Errorf("read object value: %w", err)
+		}
+		res = append(res, E{Key: k, Value: vv})
+	}
+	if _, err = dec.ReadToken(); err != nil { // '}'
+		return nil, false, fmt.Errorf("read object close: %w", err)
+	}
+	return res, false, nil
+}
+
+// decodeArray decodes a JSON array into A.
+func decodeArray(dec *jsontext.Decoder, _ *OperatorRegistry) (A, error) {
+	if _, err := dec.ReadToken(); err != nil { // '['
+		return nil, fmt.Errorf("read array open: %w", err)
+	}
+	if dec.PeekKind() == ']' { // empty
+		if _, err := dec.ReadToken(); err != nil {
+			return nil, fmt.Errorf("read array close: %w", err)
+		}
+		return A{}, nil
+	}
+	arr := make(A, 0)
+	for dec.PeekKind() != ']' {
+		var elem any
+		if err := json.UnmarshalDecode(dec, &elem); err != nil {
+			return nil, fmt.Errorf("read array element: %w", err)
+		}
+		arr = append(arr, elem)
+	}
+	if _, err := dec.ReadToken(); err != nil { // ']'
+		return nil, fmt.Errorf("read array close: %w", err)
+	}
+	return arr, nil
 }
