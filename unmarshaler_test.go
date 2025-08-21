@@ -31,25 +31,25 @@ func assertA(t *testing.T, v any) A {
 }
 
 func TestUnmarshaler(t *testing.T) {
-	t.Run("empty object -> empty D", func(t *testing.T) {
+	t.Run("empty object returns empty D", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		d := assertD(t, unmarshal(t, r, `{}`))
 		require.Len(t, d, 0)
 	})
 
-	t.Run("empty array -> empty A", func(t *testing.T) {
+	t.Run("empty array returns empty A", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		a := assertA(t, unmarshal(t, r, `[]`))
 		require.Len(t, a, 0)
 	})
 
-	t.Run("regular object ordering preserved", func(t *testing.T) {
+	t.Run("regular object preserves ordering", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		d := assertD(t, unmarshal(t, r, `{"a":1,"b":2}`))
 		require.Equal(t, []E{{Key: "a", Value: float64(1)}, {Key: "b", Value: float64(2)}}, []E(d))
 	})
 
-	t.Run("nested array wraps objects", func(t *testing.T) {
+	t.Run("nested array wraps object elements", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		a := assertA(t, unmarshal(t, r, `[1,{"x":2}]`))
 		require.Len(t, a, 2)
@@ -58,7 +58,7 @@ func TestUnmarshaler(t *testing.T) {
 		require.Equal(t, "x", d[0].Key)
 	})
 
-	t.Run("operator object dispatch + skip extra", func(t *testing.T) {
+	t.Run("operator object dispatches and skips extra fields", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		require.NoError(t, Register(r, "val", func(dec *jsontext.Decoder) (int, error) {
 			var num int
@@ -71,7 +71,7 @@ func TestUnmarshaler(t *testing.T) {
 		require.Equal(t, 42, v)
 	})
 
-	t.Run("primitive value bypassed (SkipFunc)", func(t *testing.T) {
+	t.Run("primitive value bypassed via SkipFunc", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		v := unmarshal(t, r, `123`)
 		require.Equal(t, float64(123), v)
@@ -79,14 +79,14 @@ func TestUnmarshaler(t *testing.T) {
 }
 
 func TestDocumentUnmarshaler(t *testing.T) {
-	t.Run("empty object -> *D empty", func(t *testing.T) {
+	t.Run("empty object decodes into empty D", func(t *testing.T) {
 		var d D
 		err := json.Unmarshal([]byte(`{}`), &d, json.WithUnmarshalers(documentUnmarshaler()))
 		require.NoError(t, err)
 		require.Len(t, d, 0)
 	})
 
-	t.Run("ordering preserved + no operator dispatch when target is *D", func(t *testing.T) {
+	t.Run("target D preserves ordering and skips operator dispatch", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		called := false
 		require.NoError(t, Register(r, "val", func(dec *jsontext.Decoder) (int, error) {
@@ -98,7 +98,7 @@ func TestDocumentUnmarshaler(t *testing.T) {
 			return num, nil
 		}))
 
-		// Use full Unmarshalers (includes operator logic) but target *D so operator must NOT trigger.
+		// use full unmarshalers (includes operator logic) but target D so operator must not trigger
 		var d D
 		err := json.Unmarshal([]byte(`{"$val":42,"b":2}`), &d, json.WithUnmarshalers(Unmarshalers(r)))
 		require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestDocumentUnmarshaler(t *testing.T) {
 		require.Equal(t, []E{{Key: "$val", Value: float64(42)}, {Key: "b", Value: float64(2)}}, []E(d))
 	})
 
-	t.Run("nested operator inside *D dispatched", func(t *testing.T) {
+	t.Run("nested operator inside D dispatched", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		require.NoError(t, Register(r, "val", func(dec *jsontext.Decoder) (int, error) {
 			var num int
@@ -129,14 +129,14 @@ func TestDocumentUnmarshaler(t *testing.T) {
 }
 
 func TestCollectionUnmarshaler(t *testing.T) {
-	t.Run("empty array -> *A empty", func(t *testing.T) {
+	t.Run("empty array decodes into empty A", func(t *testing.T) {
 		var a A
 		err := json.Unmarshal([]byte(`[]`), &a, json.WithUnmarshalers(collectionUnmarshaler()))
 		require.NoError(t, err)
 		require.Len(t, a, 0)
 	})
 
-	t.Run("array with regular object element -> element decoded as D", func(t *testing.T) {
+	t.Run("array regular object element decodes as D", func(t *testing.T) {
 		var a A
 		err := json.Unmarshal([]byte(`[{"a":1}]`), &a, json.WithUnmarshalers(Unmarshalers(NewOperatorRegistry())))
 		require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestCollectionUnmarshaler(t *testing.T) {
 		require.Equal(t, []E{{Key: "a", Value: float64(1)}}, []E(d))
 	})
 
-	t.Run("array with operator object element -> operator dispatched", func(t *testing.T) {
+	t.Run("array operator object element dispatches operator", func(t *testing.T) {
 		r := NewOperatorRegistry()
 		require.NoError(t, Register(r, "val", func(dec *jsontext.Decoder) (int, error) {
 			var num int
