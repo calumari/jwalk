@@ -9,12 +9,12 @@ import (
 
 // Unmarshalers returns the full set of jwalk unmarshalers allowing decoding
 // into:
-//   - any/interface{} -> objects as D, arrays as A, operator objects dispatched
+//   - any/interface{} -> objects as D, arrays as A, sentinel objects dispatched
 //   - *D              -> direct ordered object decoding
 //   - *A              -> direct array decoding
-func Unmarshalers(r *OperatorRegistry) *json.Unmarshalers {
+func Unmarshalers(r *Registry) *json.Unmarshalers {
 	return json.JoinUnmarshalers(
-		unmarshalValue(r), // *any (objects, arrays, operators)
+		unmarshalValue(r), // *any (objects, arrays, directives)
 		unmarshalDocument(),
 		unmarshalCollection(),
 	)
@@ -23,23 +23,23 @@ func Unmarshalers(r *OperatorRegistry) *json.Unmarshalers {
 // Unmarshaler returns a custom JSON unmarshaller that:
 //   - Wraps JSON objects as type D (ordered document) rather than map[string]any
 //   - Wraps JSON arrays as type A so callers can distinguish from []any
-//   - Detects operator objects of the form {"$<name>": <value>[, ...ignored...]}
-//     and dispatches to the registered operator implementation. Any extra
-//     fields after the operator root field are currently ignored (skipped).
+//   - Detects sentinel objects of the form {"$<name>": <value>[, ...ignored...]}
+//     and dispatches to the registered directive implementation. Any extra
+//     fields after the sentinel root field are currently ignored (skipped).
 //   - Leaves primitive JSON values (string, number, bool, null) to other
 //     unmarshalValue logic by returning json.SkipFunc.
 //
 // Empty objects ({}) produce an empty D; empty arrays ([]) produce an empty A.
-func unmarshalValue(r *OperatorRegistry) *json.Unmarshalers {
+func unmarshalValue(r *Registry) *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *any) error {
 		switch dec.PeekKind() {
 		case '{':
-			// object, potentially operator
-			val, wasOperator, err := decodeObject(dec, r, true)
+			// object, potentially directive sentinel
+			val, wasDirective, err := decodeObject(dec, r, true)
 			if err != nil {
 				return err
 			}
-			if wasOperator {
+			if wasDirective {
 				*v = val
 			} else {
 				*v = val.(D)
@@ -58,11 +58,10 @@ func unmarshalValue(r *OperatorRegistry) *json.Unmarshalers {
 	})
 }
 
-// DocumentUnmarshaler provides decoding of a JSON object into a *D when the
-// target type is *D (ordered key preservation). Operator objects are NOT
-// interpreted here; that only happens when decoding into interface{} via
-// Unmarshaler. This separation lets callers opt-in to operator semantics only
-// when decoding into interface{} graphs.
+// DocumentUnmarshaler decodes a JSON object into *D (preserving key order).
+// Directive sentinel objects are NOT interpreted here; that only happens when
+// decoding into interface{} via Unmarshaler. This lets callers opt in to
+// directive semantics only for interface{} graphs.
 func unmarshalDocument() *json.Unmarshalers {
 	return json.UnmarshalFromFunc(func(dec *jsontext.Decoder, v *D) error {
 		if dec.PeekKind() != '{' {
@@ -93,10 +92,12 @@ func unmarshalCollection() *json.Unmarshalers {
 	})
 }
 
-// decodeObject decodes a JSON object into a D or operator value. If
-// handleOperators is true and the first key is an operator, it returns the
-// operator value (any) with wasOperator=true. Otherwise it returns D.
-func decodeObject(dec *jsontext.Decoder, r *OperatorRegistry, handleOperators bool) (val any, wasOperator bool, err error) {
+// decodeObject decodes a JSON object into either:
+//   - a directive produced value (val, true, nil) when allowDirective is true,
+//     the first key is a directive sentinel (starts with '$'), and a registry
+//     executes it, OR
+//   - an ordered document D (val, false, nil) otherwise.
+func decodeObject(dec *jsontext.Decoder, r *Registry, allowDirective bool) (val any, wasDirective bool, err error) {
 	if _, err = dec.ReadToken(); err != nil { // '{'
 		return nil, false, fmt.Errorf("read object open: %w", err)
 	}
@@ -111,18 +112,18 @@ func decodeObject(dec *jsontext.Decoder, r *OperatorRegistry, handleOperators bo
 	if err = json.UnmarshalDecode(dec, &firstKey); err != nil {
 		return nil, false, fmt.Errorf("read object first key: %w", err)
 	}
-	if handleOperators && len(firstKey) > 0 && firstKey[0] == '$' && r != nil {
-		vv, opErr := r.Call(firstKey[1:], dec)
-		if opErr != nil {
-			return nil, false, fmt.Errorf("operator %q call: %w", firstKey, opErr)
+	if allowDirective && firstKey != "" && firstKey[0] == '$' && r != nil {
+		vv, err := r.Exec(firstKey[1:], dec)
+		if err != nil {
+			return nil, false, fmt.Errorf("directive %q call: %w", firstKey, err)
 		}
 		for dec.PeekKind() != '}' { // skip remaining fields
-			if opErr = dec.SkipValue(); opErr != nil {
-				return nil, false, fmt.Errorf("operator %q skip extra field: %w", firstKey, opErr)
+			if err = dec.SkipValue(); err != nil {
+				return nil, false, fmt.Errorf("directive %q skip extra field: %w", firstKey, err)
 			}
 		}
-		if _, opErr = dec.ReadToken(); opErr != nil {
-			return nil, false, fmt.Errorf("operator %q read object close: %w", firstKey, opErr)
+		if _, err = dec.ReadToken(); err != nil {
+			return nil, false, fmt.Errorf("directive %q read object close: %w", firstKey, err)
 		}
 		return vv, true, nil
 	}
@@ -150,7 +151,7 @@ func decodeObject(dec *jsontext.Decoder, r *OperatorRegistry, handleOperators bo
 }
 
 // decodeArray decodes a JSON array into A.
-func decodeArray(dec *jsontext.Decoder, _ *OperatorRegistry) (A, error) {
+func decodeArray(dec *jsontext.Decoder, _ *Registry) (A, error) {
 	if _, err := dec.ReadToken(); err != nil { // '['
 		return nil, fmt.Errorf("read array open: %w", err)
 	}
