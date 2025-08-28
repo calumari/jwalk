@@ -1,9 +1,10 @@
 package jwalk
 
 import (
+	"regexp"
 	"time"
 
-	json "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 )
 
@@ -22,6 +23,13 @@ var (
 	//
 	// into a time.Duration using time.ParseDuration.
 	StdDurationDirective = NewDirective("std.duration", unmarshalDuration)
+
+	// RegexDirective constructs a Directive that decodes values of the form:
+	//
+	//	{"$std.regex": "^[a-z]+$"}
+	//
+	// into a *regexp.Regexp using regexp.Compile.
+	StdRegexDirective = NewDirective("std.regex", unmarshalRegex)
 )
 
 func unmarshalTime(dec *jsontext.Decoder) (time.Time, error) {
@@ -56,24 +64,10 @@ func unmarshalDuration(dec *jsontext.Decoder) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-// NewTimeDirective returns a Registration parsing an RFC3339 timestamp into
-// time.Time under a custom directive name.
-func NewTimeDirective(name string) Registration {
-	return NewDirective(name, decodeTime)
-}
-
-// NewDurationDirective returns a Registration parsing a Go duration string into
-// time.Duration under a custom directive name.
-func NewDurationDirective(name string) Registration {
-	return NewDirective(name, decodeDuration)
-}
-
-// Default stdlib directive registrations using canonical names.
-var (
-	TimeDirective     = NewTimeDirective("std.time")
-	DurationDirective = NewDurationDirective("std.duration")
-)
-
-func Stdlib() Registration {
-	return Group(TimeDirective, DurationDirective)
+func unmarshalRegex(dec *jsontext.Decoder) (*regexp.Regexp, error) {
+	var expr string
+	if err := json.UnmarshalDecode(dec, &expr); err != nil {
+		return nil, err
+	}
+	return regexp.Compile(expr)
 }
